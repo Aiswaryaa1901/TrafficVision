@@ -1,0 +1,5 @@
+# Member 3 runtime: Python standard library only (Python 3.9 - 3.12).
+# No extra packages are needed to run the module.
+
+# Testing
+pytest>=7.0
