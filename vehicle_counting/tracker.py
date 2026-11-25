@@ -16,19 +16,34 @@ def calculate_distance(center1, center2):
 
 
 class VehicleTracker:
-    def __init__(self):
+    # MEMBER 3 INTEGRATION CHANGE: the constructor now accepts OPTIONAL
+    # arguments. Called with no arguments it behaves exactly as before
+    # (line x=960, lanes 300/459/647, max_distance=50, max_missed=10).
+    def __init__(
+        self,
+        counting_line_x=960,
+        lane_boundaries=None,
+        max_distance=50,
+        max_missed=10,
+    ):
         self.next_id = 1
         self.tracks = {}
-        self.max_distance = 50
-        self.max_missed = 10
+        self.max_distance = max_distance
+        self.max_missed = max_missed
 
         self.counted_ids = set()
         self.vehicle_count = 0
-        self.counting_line_x = 960
+        self.counting_line_x = counting_line_x
 
         self.minute_counts = {}
 
-        self.lane_boundaries = [300, 459, 647]
+        # Crossings whose class has no category (not car/bus/truck/two-wheeler).
+        # They are still included in vehicle_count, as before.
+        self.unmapped_count = 0
+
+        self.lane_boundaries = (
+            list(lane_boundaries) if lane_boundaries is not None else [300, 459, 647]
+        )
 
         self.vehicle_categories = {
             "cars": 0,
@@ -45,6 +60,33 @@ class VehicleTracker:
             "motorbike": "two_wheelers",
             "two_wheeler": "two_wheelers"
         }
+
+    def _ensure_minute(self, minute):
+        """Create the (all-zero) lane/category table for a minute if missing."""
+        if minute not in self.minute_counts:
+            self.minute_counts[minute] = {
+                "lane_1": self.vehicle_categories.copy(),
+                "lane_2": self.vehicle_categories.copy(),
+                "lane_3": self.vehicle_categories.copy(),
+                "lane_4": self.vehicle_categories.copy()
+            }
+
+    def fill_missing_minutes(self, last_minute):
+        """Add explicit all-zero entries for minutes 0..last_minute with no crossings.
+
+        Without this a minute in which nothing crossed the line is simply absent
+        from the output, which cannot be told apart from 'no data'. Existing
+        entries are never changed.
+        """
+        for minute in range(0, int(last_minute) + 1):
+            self._ensure_minute(minute)
+
+    def export_minute_counts(self):
+        """Return the per-minute lane counts in the vehicle_counts.json format."""
+        return [
+            {"minute": minute, "lanes": lanes}
+            for minute, lanes in sorted(self.minute_counts.items())
+        ]
 
     def count_crossing(self, vehicle_id, current_center, timestamp):
         current_x, current_y = current_center
@@ -69,16 +111,12 @@ class VehicleTracker:
             vehicle_class = self.tracks[vehicle_id]["class"].lower()
             category = self.class_mapping.get(vehicle_class)
 
-            if minute not in self.minute_counts:
-                self.minute_counts[minute] = {
-                    "lane_1": self.vehicle_categories.copy(),
-                    "lane_2": self.vehicle_categories.copy(),
-                    "lane_3": self.vehicle_categories.copy(),
-                    "lane_4": self.vehicle_categories.copy()
-                }
+            self._ensure_minute(minute)
 
             if category:
                 self.minute_counts[minute][lane][category] += 1
+            else:
+                self.unmapped_count += 1
 
             print(
                 f"Vehicle crossed: ID {vehicle_id}, "
@@ -89,7 +127,20 @@ class VehicleTracker:
         tracked_vehicles = []
         matched_ids = set()
 
-        for detection in detections:
+        # Skip frames with invalid timestamps to avoid incorrect minute-0 counts.
+        try:
+            timestamp = float(timestamp)
+        except (TypeError, ValueError, OverflowError):
+            return []
+
+        if not math.isfinite(timestamp) or timestamp < 0:
+            return []
+
+        for detection in detections or []:
+            # Skip malformed detections instead of raising KeyError.
+            if "bbox" not in detection or "class" not in detection:
+                continue
+
             bbox = detection["bbox"]
             center = get_center(bbox)
 

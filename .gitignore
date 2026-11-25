@@ -18,3 +18,14 @@ node_modules/
 .idea/
 .DS_Store
 Thumbs.db
+
+# TrafficVision temporary files
+inspect_lanes.py
+test_frames.py
+
+# Sample videos and frames
+sample_data/*.mp4
+sample_data/*.jpg
+
+# YOLO model weights
+*.pt
